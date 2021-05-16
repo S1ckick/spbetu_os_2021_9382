@@ -1,48 +1,52 @@
 CODE      SEGMENT
-          ASSUME CS:CODE, DS:DATA, SS:ASTACK
+          ASSUME SS:ASTACK, DS:DATA, CS:CODE
           
 CUSTOM_INTERRUPTION PROC far
    	jmp START_CUSTOM_INTERRUPTION
-   
-   	PSP dw ?
+INTERRUPTION_DATA:
    	KEEP_IP dw 0
    	KEEP_CS dw 0
-
+      PSP dw 0
+      KEEP_AX dw 0
+      KEEP_SS dw 0
+      KEEP_SP dw 0
       INTERRUPTION_INDEX dw 1234h
-      INTERRUPTION_STR db 'GOOD JOB! $'
+      INTER_KEY db 3bh       
+	   INTERRUPTION_STACK dw 100h dup (?)
 
-   	KEEP_SS dw ?
-	   KEEP_SP dw ?
-	   KEEP_AX dw ?
 
-   	
-   	             
-      INTER_KEY db 3Ch
-      INDEX_STR db 0
-
-	   INTERRUPTION_STACK dw 200 dup (?)
-	   END_STACK dw ?
-   
 START_CUSTOM_INTERRUPTION:
    	mov KEEP_SS,ss
    	mov KEEP_SP,sp
    	mov KEEP_AX,ax
 
-   	mov ax,cs
+   	mov ax, seg INTERRUPTION_STACK
    	mov ss,ax
-   	mov sp, offset END_STACK
+   	mov sp, offset INTERRUPTION_STACK
+      add sp, 200h
 
+      push ax
    	push bx
    	push cx
    	push dx
+      push si
+      push ds
+      push bp
+      push es
+
+
+      mov ax, seg INTERRUPTION_DATA
+      mov ds, ax
    
    	in al, 60h
       cmp al, INTER_KEY
       je DO_JOB
+      pushf
       call dword ptr cs:KEEP_IP
-      jmp ITERATION_END 
+      jmp STR_END 
 
 DO_JOB:
+      push ax
       in al, 61h
       mov ah, al
 
@@ -55,39 +59,40 @@ DO_JOB:
       mov al, 20h
       out 20h, al
 
-      xor bx, bx
-      mov bl, INDEX_STR
+      pop ax
 
 WRITE_INTERRUPTION:
       mov ah, 05h
-      mov cl, INTERRUPTION_STR[bx]
-      cmp cl, '$'
-      je STR_END
-      mov ch, 00h
+      mov cl, '+'
+      xor ch, ch
       int 16h
-      or al, al
+      or al,al
       jnz DO_SKIP
-      inc bl
-      mov INDEX_STR, bl
-      jmp ITERATION_END
+      jmp STR_END
 
 DO_SKIP:
-      mov ax, 0C00h
-      int 21h
+      mov ax, 0040h
+      mov es,ax
+      mov ax, es:[1ah]
+      mov es:[1ch], ax
       jmp WRITE_INTERRUPTION
 
 STR_END:
-      mov INDEX_STR, 0
-
-ITERATION_END:
+      pop es
+      pop bp
+      pop ds
+      pop si
       pop dx
       pop cx
       pop bx
+      pop ax
+
+      mov sp, KEEP_SP
       mov ax, KEEP_SS
       mov ss, ax
       mov ax, KEEP_AX
-      mov sp, KEEP_SP
-
+      mov al, 20h
+      out 20h, al
       iret
 
 INTERRUPTION_ENDED:
@@ -103,23 +108,20 @@ WRITE_STRING ENDP
 
 LOAD_FLAG PROC near
    	push ax
-   
-   	mov PSP,es
-   	mov al,es:[81h+1]
-   	cmp al,'/'
-   	jne LOAD_FLAG_END
+      push es
 
-   	mov al,es:[81h+2]
-   	cmp al,'u'
-   	jne LOAD_FLAG_END
-
-   	mov al,es:[81h+3]
-   	cmp al,'n'
-   	jne LOAD_FLAG_END
-
-   	mov FLAG,1h
+      mov ax, PSP
+      mov es, ax
+      cmp byte ptr es:[82h], '/'
+      jne LOAD_FLAG_END
+      cmp byte ptr es:[83h], 'u'
+      jne LOAD_FLAG_END
+      cmp byte ptr es:[84h], 'n'
+      jne LOAD_FLAG_END
+      mov FLAG, 1
   
 LOAD_FLAG_END:
+      pop es
    	pop ax
    	ret
 LOAD_FLAG ENDP
@@ -129,10 +131,10 @@ IS_LOADED PROC near
    	push ax
    	push si
    
-    ;by 35h getting interruption's address 
+      ;by 35h getting interruption's address 
    	mov ah,35h
-   	;1ch -- number of interruption
-   	mov al,1ch
+   	;09h -- number of interruption
+   	mov al,09h
    	int 21h
 
    	mov si, offset INTERRUPTION_INDEX
@@ -140,7 +142,7 @@ IS_LOADED PROC near
    	mov dx,es:[bx+si]
    	cmp dx, 1234h
    	jne IS_LOADED_END
-   	mov FLAG_LOAD,1h
+   	mov FLAG_LOAD, 1
 
 IS_LOADED_END:   
    	pop si
@@ -151,132 +153,126 @@ IS_LOADED ENDP
 
 LOAD_INTERRUPTION PROC near
    	push ax
+      push bx
+      push es
    	push dx
+      push cx
    
-   	;checking if interruption is already loaded
-   	call IS_LOADED
-   	cmp FLAG_LOAD,1h
-   	je CUSTOM_ALREADY_LOADED
-   	jmp STARTING_TO_LOAD
-   
-CUSTOM_ALREADY_LOADED:
-   	lea dx, INTERRUPTION_ALREADY_LOADED_SEQ
-   	call WRITE_STRING
-   	jmp END_LOADED
-  
-STARTING_TO_LOAD:
    	mov AH,35h
-	   mov AL,1ch
+	   mov AL,09h
 	   int 21h 
 	   mov KEEP_CS,es
 	   mov KEEP_IP,bx
    
    	push ds
-   	lea dx, CUSTOM_INTERRUPTION
+   	mov dx, offset CUSTOM_INTERRUPTION
    	mov ax, SEG CUSTOM_INTERRUPTION
-   	mov ds,ax
-   	mov ah,25h
-   	mov al,1ch
+   	mov ds, ax
+   	mov ah, 25h
+   	mov al, 09h
    	int 21h
    	pop ds
-   	lea dx, INTERRUPTION_JUST_LOADED_SEQ
-   	call WRITE_STRING
    
-   	lea dx, INTERRUPTION_ENDED
-   	mov cl,4h
-   	shr dx,cl
+   	mov dx, offset INTERRUPTION_ENDED
+      add dx, 10fh
+   	mov cl, 4
+   	shr dx, cl
    	inc dx
-   	mov ax,cs
-   	sub ax, PSP
-   	add dx,ax
-   	xor ax,ax
-   	mov ah,31h
-   	int 21h
-     
-END_LOADED:  
+      xor ax, ax
+      mov ah, 31h
+      int 21h
+      
+      pop cx
    	pop dx
+      pop es
+      pop bx
    	pop ax
    	ret
 LOAD_INTERRUPTION ENDP
 
 
-UNLOAD_INTERRUPTION PROC near
+UNLOAD_INTERRUPTION PROC
+      cli
    	push ax
+      push bx
+      push dx
+      push es
    	push si
-   
-   	call IS_LOADED
-   	cmp FLAG_LOAD,1h
-   	je START_UNLOAD
-   
-   	lea dx, INTERRUPTION_NOT_LOADED_SEQ
-   	call WRITE_STRING
-   	jmp UNLOAD_END
-   
-START_UNLOAD:
-   	cli 
-   	push DS
+
    	mov ah,35h
-	   mov al,1ch
+	   mov al,09h
 	   int 21h
 
    	mov si, offset KEEP_IP
 	   sub si, offset CUSTOM_INTERRUPTION
 	   mov dx,es:[bx+si]
 	   mov ax,es:[bx+si+2]
+
+      push ds
    	mov ds,ax
    	mov ah,25h
-   	mov al,1ch
+   	mov al,09h
    	int 21h
    	pop ds
-      sti
-   	
-      lea dx, INTERRUPTION_UNLOADED_SEQ
-      call WRITE_STRING
 
-   	mov ax,es:[bx+si-2]
-   	mov es,ax
-      mov ax,es:[2ch]
-   	push es
-   
-
-   	mov es,ax
-   	mov ah,49h
-   	int 21h
-   
-   	pop es
-   	int 21h
+   	mov es,es:[bx+si+4]
+      push es
+   	mov es, es:[2ch]
+      mov ah, 49h
+      int 21h
+      pop es
+      mov ah, 49h
+      int 21h
    	
-UNLOAD_END:   
    	pop si
+      pop es
+      pop dx
+      pop bx
    	pop ax
+      sti
    	ret
 UNLOAD_INTERRUPTION ENDP
 
 
-Main      PROC  FAR
-   	push  DS       
-   	xor   AX,AX    
-   	push  AX       
-   	mov   AX,DATA             
-   	mov   DS,AX
+Main      PROC 
+      mov ax, DATA
+      mov ds, ax
+      mov PSP, es
+      call IS_LOADED
+      call LOAD_FLAG  
+      cmp FLAG, 1
+      je UNLOAD
+      cmp FLAG_LOAD, 0
+      je LOAD
+      lea dx, INTERRUPTION_ALREADY_LOADED_SEQ
+      call WRITE_STRING
+      jmp END_MAIN
+UNLOAD:
+      cmp FLAG_LOAD, 0
+      je NOT_EXIST
+      call UNLOAD_INTERRUPTION
+      lea dx, INTERRUPTION_UNLOADED_SEQ
+      call WRITE_STRING
+      jmp END_MAIN
 
-   	call LOAD_FLAG
-   	cmp FLAG, 1h
-   	je IF_UNLOADED
-   	call LOAD_INTERRUPTION
-   	jmp THE_END
-   
-IF_UNLOADED:
-   	call UNLOAD_INTERRUPTION
-   
-THE_END:  
-   	mov ah,4ch
-   	int 21h    
+NOT_EXIST:  
+      lea dx, INTERRUPTION_NOT_LOADED_SEQ
+      call WRITE_STRING
+      call END_MAIN
+
+LOAD:
+      lea dx, INTERRUPTION_JUST_LOADED_SEQ
+      call WRITE_STRING
+      call LOAD_INTERRUPTION
+END_MAIN:
+      xor al, al
+      mov ah, 4ch
+      int 21h
 Main      ENDP
 CODE      ENDS
 
 ASTACK    SEGMENT  STACK
-   DW 200 DUP(?)   
+   DW 100 DUP(?)   
 ASTACK    ENDS
 
 DATA      SEGMENT
@@ -291,3 +287,6 @@ DATA      SEGMENT
 
 DATA      ENDS
           END Main
+
+
+          
